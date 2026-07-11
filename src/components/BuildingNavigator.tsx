@@ -390,10 +390,10 @@ export default function BuildingNavigator() {
             const bPct = bTotal > 0 ? Math.round(bItems.reduce((s, i) => s + i.percent, 0) / bTotal) : 0
 
             return (
-              <Card key={building.id} className="overflow-hidden">
+              <Card key={building.id}>
                 {/* Building header */}
                 <div
-                  className="flex items-center justify-between p-4 bg-gradient-to-r from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 cursor-pointer hover:from-slate-100 hover:to-slate-200 dark:hover:from-slate-800 dark:hover:to-slate-700 transition-colors"
+                  className="flex flex-wrap items-center justify-between gap-2 p-4 bg-gradient-to-r from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 cursor-pointer hover:from-slate-100 hover:to-slate-200 dark:hover:from-slate-800 dark:hover:to-slate-700 transition-colors"
                   onClick={() => toggleBuilding(building.id)}
                 >
                   <div className="flex items-center gap-3">
@@ -443,7 +443,7 @@ export default function BuildingNavigator() {
                       return (
                         <div key={floor.id}>
                           <div
-                            className="flex items-center justify-between pl-10 pr-4 py-3 hover:bg-muted/30 cursor-pointer transition-colors border-b"
+                            className="flex flex-wrap items-center justify-between gap-1 pl-10 pr-4 py-3 hover:bg-muted/30 cursor-pointer transition-colors border-b"
                             onClick={() => toggleFloor(floor.id)}
                           >
                             <div className="flex items-center gap-3">
@@ -491,7 +491,7 @@ export default function BuildingNavigator() {
                                 return (
                                   <div key={room.id} className="mt-2">
                                     <div
-                                      className="flex items-center justify-between py-2 px-2 rounded hover:bg-muted/30 cursor-pointer transition-colors"
+                                      className="flex flex-wrap items-center justify-between gap-1 py-2 px-2 rounded hover:bg-muted/30 cursor-pointer transition-colors"
                                       onClick={() => toggleRoom(room.id)}
                                     >
                                       <div className="flex items-center gap-2">
