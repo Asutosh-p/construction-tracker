@@ -366,19 +366,70 @@ app.get('/sheets/debug', async (c) => {
   }
 })
 
+// Helper: parse CSV row
+function parseCSV(text: string): string[][] {
+  const lines = text.split('\n').filter(l => l.trim())
+  return lines.map(line => {
+    const cells: string[] = []
+    let current = ''
+    let inQuotes = false
+    for (const ch of line) {
+      if (ch === '"') { inQuotes = !inQuotes; continue }
+      if (ch === ',' && !inQuotes) { cells.push(current.trim()); current = ''; continue }
+      current += ch
+    }
+    cells.push(current.trim())
+    return cells
+  })
+}
+
+// Extract sheet ID from Google Sheets URL
+function extractSheetId(url: string): string | null {
+  const m = url.match(/\/sheets\/d\/([a-zA-Z0-9_-]+)/)
+  return m ? m[1] : null
+}
+
+// Read a sheet tab as CSV
+async function readSheetCSV(sheetId: string, tabName: string): Promise<string[][]> {
+  const encoded = encodeURIComponent(tabName)
+  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encoded}`
+  const res = await fetch(url, { redirect: 'follow' })
+  if (!res.ok) return []
+  const text = await res.text()
+  if (!text.trim() || text.startsWith('<!DOCTYPE')) return []
+  return parseCSV(text)
+}
+
 app.post('/sheets/import', async (c) => {
   if (!syncConfig.scriptUrl) return c.json({ ok: false, error: 'No Google Sheet URL configured' }, 400)
 
   try {
-    const res = await fetch(`${syncConfig.scriptUrl}?action=import`, {
-      method: 'GET',
-      redirect: 'follow'
-    })
-    const text = await res.text()
-    let result: any
-    try { result = JSON.parse(text) } catch { return c.json({ ok: false, error: 'Invalid response from Google Sheet' }, 502) }
+    const sheetId = extractSheetId(syncConfig.scriptUrl)
+    if (!sheetId) return c.json({ ok: false, error: 'Could not extract Sheet ID from URL' }, 400)
 
-    if (!result.sheets) return c.json({ ok: false, error: 'No sheet data returned' }, 502)
+    // Read all tabs directly from Google Sheets CSV export
+    const [buildingRows, floorRows, roomRows, itemRows] = await Promise.all([
+      readSheetCSV(sheetId, 'Buildings'),
+      readSheetCSV(sheetId, 'Floors'),
+      readSheetCSV(sheetId, 'Rooms'),
+      readSheetCSV(sheetId, 'Items'),
+    ])
+
+    const result = { sheets: {} as any }
+    if (buildingRows.length > 1) {
+      result.sheets.buildings = buildingRows.slice(1).map(r => ({ id: r[0]||'', name: r[1]||'', type: r[2]||'' }))
+    }
+    if (floorRows.length > 1) {
+      result.sheets.floors = floorRows.slice(1).map(r => ({ id: r[0]||'', name: r[1]||'', building: r[2]||'' }))
+    }
+    if (roomRows.length > 1) {
+      result.sheets.rooms = roomRows.slice(1).map(r => ({ id: r[0]||'', name: r[1]||'', floor: r[2]||'', building: r[3]||'' }))
+    }
+    if (itemRows.length > 1) {
+      result.sheets.items = itemRows.slice(1).map(r => ({ id: r[0]||'', code: r[1]||'', name: r[2]||'', status: r[3]||'', percent: Number(r[4])||0, floor: r[5]||'', building: r[6]||'', type: r[7]||'', room: r[8]||'' }))
+    }
+
+    if (!result.sheets.buildings && !result.sheets.items) return c.json({ ok: false, error: 'No data found in sheets. Make sure you have Buildings and Items tabs.' }, 404)
 
     const imported = { buildings: 0, floors: 0, rooms: 0, items: 0 }
 

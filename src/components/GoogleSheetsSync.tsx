@@ -210,10 +210,10 @@ export default function GoogleSheetsSync() {
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2">
-          <Label>Google Apps Script Web App URL</Label>
+          <Label>Google Sheets URL</Label>
           <div className="flex gap-2">
             <Input
-              placeholder="https://script.google.com/macros/s/XXXX/exec"
+              placeholder="https://docs.google.com/spreadsheets/d/XXXXX/edit"
               value={scriptUrl}
               onChange={e => setScriptUrl(e.target.value)}
               className="flex-1"
@@ -243,7 +243,7 @@ export default function GoogleSheetsSync() {
           </div>
           <Button variant="outline" size="sm" onClick={() => setShowScript(!showScript)} className="mt-2">
             <Copy className="h-4 w-4 mr-1" />
-            {showScript ? 'Hide Script Code' : 'Show Script Code to Copy'}
+            {showScript ? 'Hide Export Script' : 'Setup Export (Apps Script)'}
           </Button>
           {showScript && (
             <div className="relative">
