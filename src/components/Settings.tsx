@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Plus, Trash2, Save, Settings2, FileText, Pencil as PencilIcon } from 'lucide-react'
 
 interface ItemType { id: string; code: string; name: string; description?: string }
@@ -24,6 +25,8 @@ export default function Settings() {
   const [newTypeName, setNewTypeName] = useState('')
   const [newTypeDesc, setNewTypeDesc] = useState('')
   const [editingTypeId, setEditingTypeId] = useState<string | null>(null)
+  const [confirmDeleteType, setConfirmDeleteType] = useState<string | null>(null)
+  const [confirmDeleteTemplate, setConfirmDeleteTemplate] = useState<string | null>(null)
   const [editTypeCode, setEditTypeCode] = useState('')
   const [editTypeName, setEditTypeName] = useState('')
   const [editTypeDesc, setEditTypeDesc] = useState('')
@@ -60,7 +63,12 @@ export default function Settings() {
     await fetch(`/api/item-types/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: editTypeCode.trim().toUpperCase(), name: editTypeName.trim(), description: editTypeDesc.trim() || null }) })
     cancelEditType(); await fetchItemTypes()
   }
-  async function deleteItemType(id: string) { if (!confirm('Delete this item type?')) return; await fetch(`/api/item-types/${id}`, { method: 'DELETE' }); await fetchItemTypes() }
+  async function deleteItemType(id: string) { setConfirmDeleteType(id) }
+  async function confirmDeleteItemType() {
+    if (!confirmDeleteType) return
+    await fetch(`/api/item-types/${confirmDeleteType}`, { method: 'DELETE' })
+    setConfirmDeleteType(null); await fetchItemTypes()
+  }
 
   async function addTemplate() {
     if (!newTemplateItemTypeId || !newTemplateName.trim()) return
@@ -76,7 +84,12 @@ export default function Settings() {
     }
     setNewTemplateItemTypeId(''); setNewTemplateName(''); setNewTemplateDesc(''); setNewTemplateSteps(['']); await fetchTemplates()
   }
-  async function deleteTemplate(id: string) { if (!confirm('Delete this workflow template?')) return; await fetch(`/api/workflow-templates/${id}`, { method: 'DELETE' }); await fetchTemplates() }
+  async function deleteTemplate(id: string) { setConfirmDeleteTemplate(id) }
+  async function confirmDeleteTemplateFn() {
+    if (!confirmDeleteTemplate) return
+    await fetch(`/api/workflow-templates/${confirmDeleteTemplate}`, { method: 'DELETE' })
+    setConfirmDeleteTemplate(null); await fetchTemplates()
+  }
 
   return (
     <div className="space-y-6">
@@ -187,6 +200,31 @@ export default function Settings() {
           </div>
         </CardContent>
       </Card>
+
+    <AlertDialog open={!!confirmDeleteType} onOpenChange={() => setConfirmDeleteType(null)}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete Item Type?</AlertDialogTitle>
+          <AlertDialogDescription>This action cannot be undone.</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" onClick={confirmDeleteItemType}>Delete</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    <AlertDialog open={!!confirmDeleteTemplate} onOpenChange={() => setConfirmDeleteTemplate(null)}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete Workflow Template?</AlertDialogTitle>
+          <AlertDialogDescription>This action cannot be undone.</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" onClick={confirmDeleteTemplateFn}>Delete</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
     </div>
   )
 }

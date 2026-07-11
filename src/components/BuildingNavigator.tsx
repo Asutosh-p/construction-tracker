@@ -218,28 +218,23 @@ export default function BuildingNavigator() {
   // --- Building CRUD ---
   async function addBuilding() {
     if (!newBuildingName.trim()) return
-    const res = await fetch('/api/buildings', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: newBuildingName.trim(), buildingTypeId: '' })
-    })
-    if (!res.ok) {
-      const typeRes = await fetch('/api/building-types')
-      const typeData = typeRes.ok ? await typeRes.json() : { items: [] }
-      const types = typeData.items ?? []
-      let typeId = types[0]?.id
-      if (!typeId) {
-        const createType = await fetch('/api/building-types', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code: 'PILLERS', name: 'Pillers Project' })
-        })
-        const td = await createType.json()
-        typeId = td.data?.id ?? td.id
-      }
-      await fetch('/api/buildings', {
+    const typeRes = await fetch('/api/building-types')
+    const typeData = typeRes.ok ? await typeRes.json() : { items: [] }
+    const types = typeData.items ?? []
+    let typeId = types[0]?.id
+    if (!typeId) {
+      const createType = await fetch('/api/building-types', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newBuildingName.trim(), buildingTypeId: typeId })
+        body: JSON.stringify({ code: 'PILLERS', name: 'Pillers Project' })
       })
+      const td = await createType.json()
+      typeId = td.data?.id ?? td.id
     }
+    if (!typeId) return
+    await fetch('/api/buildings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newBuildingName.trim(), buildingTypeId: typeId })
+    })
     setNewBuildingName(''); setShowAddBuilding(false); fetchTree()
   }
   async function deleteBuilding(id: string) { await fetch(`/api/buildings/${id}`, { method: 'DELETE' }); setConfirmDelete(null); fetchTree() }

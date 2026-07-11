@@ -138,6 +138,11 @@ app.get('/tree', async (c) => {
 
 // Seed PILLERS project data
 app.post('/seed', async (c) => {
+  const existingBuildings = await prisma.building.count()
+  if (existingBuildings > 0) {
+    return c.json({ success: true, message: 'Already seeded' })
+  }
+
   const itemTypes = [
     { code: 'GF', name: 'Doors' },
     { code: 'FCo', name: 'Curtain wall' },
