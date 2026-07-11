@@ -270,4 +270,139 @@ app.delete('/workflow-steps/:id', async (c) => {
   return c.json({ success: true })
 })
 
+
+// ===== Google Sheets Sync =====
+let syncConfig = { scriptUrl: '' as string }
+
+app.get('/sheets/config', (c) => {
+  return c.json({ scriptUrl: syncConfig.scriptUrl })
+})
+
+app.post('/sheets/config', async (c) => {
+  const body = await c.req.json()
+  syncConfig.scriptUrl = body.scriptUrl || ''
+  return c.json({ success: true, scriptUrl: syncConfig.scriptUrl })
+})
+
+app.get('/sheets/test', async (c) => {
+  if (!syncConfig.scriptUrl) return c.json({ ok: false, error: 'No Google Sheet URL configured' }, 400)
+  try {
+    const res = await fetch(syncConfig.scriptUrl, { method: 'GET', redirect: 'follow' })
+    const text = await res.text()
+    let data: unknown
+    try { data = JSON.parse(text) } catch { data = text }
+    return c.json({ ok: true, status: res.status, data })
+  } catch (err: any) {
+    return c.json({ ok: false, error: err.message }, 500)
+  }
+})
+
+app.post('/sheets/export', async (c) => {
+  if (!syncConfig.scriptUrl) return c.json({ ok: false, error: 'No Google Sheet URL configured' }, 400)
+
+  const buildings = await prisma.building.findMany({ include: { buildingType: true } })
+  const floors = await prisma.floor.findMany({ include: { building: true } })
+  const rooms = await prisma.room.findMany({ include: { floor: { include: { building: true } } } })
+  const items = await prisma.installationItem.findMany({ include: { floor: { include: { building: true } }, itemType: true } })
+  const itemTypes = await prisma.itemType.findMany()
+
+  const payload = {
+    action: 'export',
+    data: {
+      buildings: buildings.map(b => ({ id: b.id, name: b.name, type: b.buildingType?.name || '' })),
+      floors: floors.map(f => ({ id: f.id, name: f.name, building: f.building?.name || '' })),
+      rooms: rooms.map(r => ({ id: r.id, name: r.name, floor: r.floor?.name || '', building: r.floor?.building?.name || '' })),
+      items: items.map(i => ({ id: i.id, code: i.code, name: i.name, status: i.status, percent: i.percent, floor: i.floor?.name || '', building: i.floor?.building?.name || '', type: i.itemType?.name || '' })),
+      itemTypes: itemTypes.map(t => ({ id: t.id, code: t.code, name: t.name, description: t.description || '' })),
+    }
+  }
+
+  try {
+    const res = await fetch(syncConfig.scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify(payload),
+      redirect: 'follow'
+    })
+    const text = await res.text()
+    let result: unknown
+    try { result = JSON.parse(text) } catch { result = text }
+    return c.json({ ok: true, data: result })
+  } catch (err: any) {
+    return c.json({ ok: false, error: err.message }, 500)
+  }
+})
+
+app.post('/sheets/import', async (c) => {
+  if (!syncConfig.scriptUrl) return c.json({ ok: false, error: 'No Google Sheet URL configured' }, 400)
+
+  try {
+    const res = await fetch(syncConfig.scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'import' }),
+      redirect: 'follow'
+    })
+    const text = await res.text()
+    let result: any
+    try { result = JSON.parse(text) } catch { return c.json({ ok: false, error: 'Invalid response from Google Sheet' }, 502) }
+
+    if (!result.sheets) return c.json({ ok: false, error: 'No sheet data returned' }, 502)
+
+    const imported = { buildings: 0, floors: 0, items: 0 }
+
+    if (result.sheets.buildings) {
+      for (const row of result.sheets.buildings) {
+        if (!row.name) continue
+        let bt = null
+        if (row.type) {
+          bt = await prisma.buildingType.findFirst({ where: { name: row.type } })
+          if (!bt) bt = await prisma.buildingType.create({ data: { code: row.type.substring(0, 10).toUpperCase(), name: row.type } })
+        }
+        const existing = row.id ? await prisma.building.findUnique({ where: { id: row.id } }) : null
+        if (existing) {
+          await prisma.building.update({ where: { id: existing.id }, data: { name: row.name } })
+        } else {
+          await prisma.building.create({ data: { name: row.name, buildingTypeId: bt?.id || '' } })
+        }
+        imported.buildings++
+      }
+    }
+
+    if (result.sheets.items) {
+      for (const row of result.sheets.items) {
+        if (!row.code && !row.name) continue
+        let floor = null
+        if (row.floor) {
+          floor = await prisma.floor.findFirst({ where: { name: row.floor } })
+        }
+        let itemType = null
+        if (row.type) {
+          itemType = await prisma.itemType.findFirst({ where: { name: row.type } })
+          if (!itemType) itemType = await prisma.itemType.create({ data: { code: row.type.substring(0, 10).toUpperCase(), name: row.type } })
+        }
+        const existing = row.id ? await prisma.installationItem.findUnique({ where: { id: row.id } }) : null
+        const data = {
+          code: row.code || ('IMP-' + Date.now()),
+          name: row.name || '',
+          status: row.status || 'not_started',
+          percent: typeof row.percent === 'number' ? row.percent : 0,
+          floorId: floor?.id || '',
+          itemTypeId: itemType?.id || '',
+        }
+        if (existing) {
+          await prisma.installationItem.update({ where: { id: existing.id }, data })
+        } else if (data.floorId) {
+          await prisma.installationItem.create({ data })
+        }
+        imported.items++
+      }
+    }
+
+    return c.json({ ok: true, imported })
+  } catch (err: any) {
+    return c.json({ ok: false, error: err.message }, 500)
+  }
+})
+
 export default app
