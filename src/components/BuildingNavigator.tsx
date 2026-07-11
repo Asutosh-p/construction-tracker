@@ -109,15 +109,15 @@ function ItemRow({ item, onEdit, onWorkflow, onDelete, onToggle, expanded }: {
         <div className="flex items-center gap-2">
           {steps.length > 0 && <span className="text-[10px] text-muted-foreground">{completed}/{steps.length}</span>}
           <span className="text-xs font-medium w-8 text-right">{item.percent}%</span>
-          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
-            <Button variant="ghost" className="h-5 w-5 p-0" onClick={() => { setEditingItem(true); setEditItemCode(item.code); setEditItemName(item.name || ''); onEdit() }}>
-              <Pencil className="h-2.5 w-2.5" />
+          <div className="flex items-center gap-0.5" onClick={e => e.stopPropagation()}>
+            <Button variant="ghost" className="h-6 w-6 p-0" onClick={() => { setEditingItem(true); setEditItemCode(item.code); setEditItemName(item.name || ''); onEdit() }}>
+              <Pencil className="h-3.5 w-3.5" />
             </Button>
-            <Button variant="ghost" className="h-5 w-5 p-0" onClick={onWorkflow}>
-              <Settings2 className="h-2.5 w-2.5" />
+            <Button variant="ghost" className="h-6 w-6 p-0" onClick={onWorkflow}>
+              <Settings2 className="h-3.5 w-3.5" />
             </Button>
-            <Button variant="ghost" className="h-5 w-5 p-0" onClick={onDelete}>
-              <Trash2 className="h-2.5 w-2.5 text-destructive" />
+            <Button variant="ghost" className="h-6 w-6 p-0" onClick={onDelete}>
+              <Trash2 className="h-3.5 w-3.5 text-destructive" />
             </Button>
           </div>
         </div>
