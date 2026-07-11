@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import GoogleSheetsSync from '@/components/GoogleSheetsSync'
 import { Plus, Trash2, Save, Settings2, FileText, Pencil as PencilIcon } from 'lucide-react'
 
 interface ItemType { id: string; code: string; name: string; description?: string }
@@ -200,6 +201,8 @@ export default function Settings() {
           </div>
         </CardContent>
       </Card>
+
+    <GoogleSheetsSync />
 
     <AlertDialog open={!!confirmDeleteType} onOpenChange={() => setConfirmDeleteType(null)}>
       <AlertDialogContent>
