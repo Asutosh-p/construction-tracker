@@ -7,8 +7,9 @@ RUN bun install --frozen-lockfile
 COPY . .
 
 RUN bun x prisma generate
+RUN bun x prisma db push
 RUN bun run build
 
 EXPOSE 3001
 
-CMD ["sh", "-c", "bun x prisma db push --skip-generate && bun run server.tsx"]
+CMD ["bun", "run", "server.tsx"]
