@@ -1,0 +1,175 @@
+// SHOGO:CUSTOM-START prisma-header
+// Managed by Shogo. Do not add a datasource `url` or change the generator `provider` — the database URL is configured in prisma.config.ts (Prisma 7+).
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+// SHOGO:CUSTOM-END
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+model BuildingType {
+  id          String    @id @default(cuid())
+  code        String    @unique // C, D, E
+  name        String    // Type C, Type D, Type E
+  bedrooms    Int       @default(2)
+  hasWellness Boolean   @default(true)
+  hasLobby    Boolean   @default(true)
+  description String?
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  buildings     Building[]
+  roomTemplates RoomItemTemplate[]
+
+  @@map("building_types")
+}
+
+model Building {
+  id            String      @id @default(cuid())
+  name          String      // C103, D101, E102
+  buildingTypeId String    @map("building_type_id")
+  buildingType  BuildingType @relation(fields: [buildingTypeId], references: [id])
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  floors Floor[]
+
+  @@map("buildings")
+}
+
+model Floor {
+  id          String   @id @default(cuid())
+  name        String   // Ground Floor, 1st Floor, 2nd Floor, Upper, Lower
+  buildingId  String   @map("building_id")
+  building    Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  rooms            Room[]
+  installationItems InstallationItem[]
+
+  @@map("floors")
+}
+
+model Room {
+  id          String   @id @default(cuid())
+  name        String   // Bed1, Bed2, Wellness, Lobby
+  floorId     String   @map("floor_id")
+  floor       Floor    @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  items InstallationItem[]
+
+  @@map("rooms")
+}
+
+model ItemType {
+  id          String   @id @default(cuid())
+  code        String   @unique // CW, GF, WT, SC, PG
+  name        String   // Curtain Wall, Glass Frame, Window, etc.
+  description String?
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  items          InstallationItem[]
+  roomTemplates  RoomItemTemplate[]
+
+  @@map("item_types")
+}
+
+model InstallationItem {
+  id          String   @id @default(cuid())
+  code        String   // CW005, GF008A, WT006
+  name        String?  // Optional description
+  roomId      String?  @map("room_id")
+  room        Room?    @relation(fields: [roomId], references: [id])
+  floorId     String   @map("floor_id")
+  floor       Floor    @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  itemTypeId  String   @map("item_type_id")
+  itemType    ItemType @relation(fields: [itemTypeId], references: [id])
+  level       String?  // Upper, Lower
+  status      String   @default("not_started") // not_started, in_progress, complete
+  percent     Int      @default(0)
+  notes       String?
+  isVariation Boolean  @default(false) // Variation order from client
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  workflowSteps WorkflowStep[]
+
+  @@map("installation_items")
+}
+
+model WorkflowStep {
+  id              String            @id @default(cuid())
+  name            String            // Mockup Approved, MIR, Install Frame, etc.
+  sortOrder       Int               @default(0)
+  status          String            @default("not_started") // not_started, in_progress, complete
+  percent         Int               @default(0)
+  notes           String?
+  dateCompleted   DateTime?         @map("date_completed")
+  itemId          String            @map("item_id")
+  item            InstallationItem  @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  @@map("workflow_steps")
+}
+
+model WorkflowTemplate {
+  id          String   @id @default(cuid())
+  name        String   // "Glass Frame Standard", "Door Standard", etc.
+  itemTypeId  String?  @map("item_type_id")
+  description String?
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  steps WorkflowTemplateStep[]
+
+  @@map("workflow_templates")
+}
+
+model WorkflowTemplateStep {
+  id           String           @id @default(cuid())
+  name         String           // Step name
+  sortOrder    Int              @default(0)
+  templateId   String           @map("template_id")
+  template     WorkflowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  createdAt    DateTime         @default(now()) @map("created_at")
+
+  @@map("workflow_template_steps")
+}
+
+model RoomItemTemplate {
+  id              String      @id @default(cuid())
+  buildingTypeId  String      @map("building_type_id")
+  buildingType    BuildingType @relation(fields: [buildingTypeId], references: [id], onDelete: Cascade)
+  roomName        String      @map("room_name")
+  itemTypeId      String      @map("item_type_id")
+  itemType        ItemType    @relation(fields: [itemTypeId], references: [id])
+  code            String
+  name            String?
+  sortOrder       Int         @default(0)
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  @@unique([buildingTypeId, roomName, code])
+  @@map("room_item_templates")
+}
