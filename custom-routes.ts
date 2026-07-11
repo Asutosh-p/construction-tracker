@@ -10,6 +10,7 @@ const app = new Hono()
 app.get('/dashboard/stats', async (c) => {
   const totalBuildings = await prisma.building.count()
   const totalFloors = await prisma.floor.count()
+  const totalRooms = await prisma.room.count()
   const totalItems = await prisma.installationItem.count()
 
   const items = await prisma.installationItem.findMany({
@@ -54,7 +55,7 @@ app.get('/dashboard/stats', async (c) => {
   return c.json({
     totalBuildings,
     totalFloors,
-    totalAreas: 0,
+    totalRooms,
     totalItems,
     completedItems,
     inProgressItems,
