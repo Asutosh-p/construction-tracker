@@ -304,7 +304,7 @@ app.post('/sheets/export', async (c) => {
   const buildings = await prisma.building.findMany({ include: { buildingType: true } })
   const floors = await prisma.floor.findMany({ include: { building: true } })
   const rooms = await prisma.room.findMany({ include: { floor: { include: { building: true } } } })
-  const items = await prisma.installationItem.findMany({ include: { floor: { include: { building: true } }, itemType: true } })
+  const items = await prisma.installationItem.findMany({ include: { floor: { include: { building: true } }, itemType: true, room: true } })
   const itemTypes = await prisma.itemType.findMany()
 
   const payload = {
@@ -313,7 +313,7 @@ app.post('/sheets/export', async (c) => {
       buildings: buildings.map(b => ({ id: b.id, name: b.name, type: b.buildingType?.name || '' })),
       floors: floors.map(f => ({ id: f.id, name: f.name, building: f.building?.name || '' })),
       rooms: rooms.map(r => ({ id: r.id, name: r.name, floor: r.floor?.name || '', building: r.floor?.building?.name || '' })),
-      items: items.map(i => ({ id: i.id, code: i.code, name: i.name, status: i.status, percent: i.percent, floor: i.floor?.name || '', building: i.floor?.building?.name || '', type: i.itemType?.name || '' })),
+      items: items.map(i => ({ id: i.id, code: i.code, name: i.name, status: i.status, percent: i.percent, floor: i.floor?.name || '', building: i.floor?.building?.name || '', type: i.itemType?.name || '', room: i.room?.name || '' })),
       itemTypes: itemTypes.map(t => ({ id: t.id, code: t.code, name: t.name, description: t.description || '' })),
     }
   }
@@ -350,53 +350,119 @@ app.post('/sheets/import', async (c) => {
 
     if (!result.sheets) return c.json({ ok: false, error: 'No sheet data returned' }, 502)
 
-    const imported = { buildings: 0, floors: 0, items: 0 }
+    const imported = { buildings: 0, floors: 0, rooms: 0, items: 0 }
 
-    if (result.sheets.buildings) {
-      for (const row of result.sheets.buildings) {
-        if (!row.name) continue
-        let bt = null
-        if (row.type) {
-          bt = await prisma.buildingType.findFirst({ where: { name: row.type } })
-          if (!bt) bt = await prisma.buildingType.create({ data: { code: row.type.substring(0, 10).toUpperCase(), name: row.type } })
+    // Cache for created/found entities
+    const buildingCache: Record<string, string> = {}
+    const floorCache: Record<string, string> = {}
+    const roomCache: Record<string, string> = {}
+    const itemTypeCache: Record<string, string> = {}
+
+    async function getOrCreateBuilding(name: string, typeName?: string): Promise<string | null> {
+      if (!name) return null
+      const cacheKey = name.trim()
+      if (buildingCache[cacheKey]) return buildingCache[cacheKey]
+      let building = await prisma.building.findFirst({ where: { name: cacheKey } })
+      if (!building) {
+        let btId = ''
+        if (typeName) {
+          const bt = await getOrCreateItemType(typeName)
+          btId = bt || ''
         }
-        const existing = row.id ? await prisma.building.findUnique({ where: { id: row.id } }) : null
-        if (existing) {
-          await prisma.building.update({ where: { id: existing.id }, data: { name: row.name } })
-        } else {
-          await prisma.building.create({ data: { name: row.name, buildingTypeId: bt?.id || '' } })
-        }
+        building = await prisma.building.create({ data: { name: cacheKey, buildingTypeId: btId } })
         imported.buildings++
       }
+      buildingCache[cacheKey] = building.id
+      return building.id
     }
 
-    if (result.sheets.items) {
-      for (const row of result.sheets.items) {
-        if (!row.code && !row.name) continue
-        let floor = null
-        if (row.floor) {
-          floor = await prisma.floor.findFirst({ where: { name: row.floor } })
+    async function getOrCreateFloor(name: string, buildingId: string): Promise<string | null> {
+      if (!name || !buildingId) return null
+      const cacheKey = `${buildingId}:${name.trim()}`
+      if (floorCache[cacheKey]) return floorCache[cacheKey]
+      let floor = await prisma.floor.findFirst({ where: { name: name.trim(), buildingId } })
+      if (!floor) {
+        floor = await prisma.floor.create({ data: { name: name.trim(), buildingId, sortOrder: 0 } })
+        imported.floors++
+      }
+      floorCache[cacheKey] = floor.id
+      return floor.id
+    }
+
+    async function getOrCreateRoom(name: string, floorId: string): Promise<string | null> {
+      if (!name || !floorId) return null
+      const cacheKey = `${floorId}:${name.trim()}`
+      if (roomCache[cacheKey]) return roomCache[cacheKey]
+      let room = await prisma.room.findFirst({ where: { name: name.trim(), floorId } })
+      if (!room) {
+        room = await prisma.room.create({ data: { name: name.trim(), floorId } })
+        imported.rooms++
+      }
+      roomCache[cacheKey] = room.id
+      return room.id
+    }
+
+    async function getOrCreateItemType(name: string): Promise<string | null> {
+      if (!name) return null
+      const cacheKey = name.trim()
+      if (itemTypeCache[cacheKey]) return itemTypeCache[cacheKey]
+      let type = await prisma.itemType.findFirst({ where: { name: cacheKey } })
+      if (!type) {
+        type = await prisma.itemType.create({ data: { code: cacheKey.substring(0, 10).toUpperCase(), name: cacheKey } })
+      }
+      itemTypeCache[cacheKey] = type.id
+      return type.id
+    }
+
+    // Import from a single "Data" sheet with columns:
+    // Building | Floor | Room | Item Code | Item Name | Item Type | Status | Percent | Notes
+    if (result.sheets.data) {
+      for (const row of result.sheets.data) {
+        const buildingName = (row.building || '').trim()
+        const floorName = (row.floor || '').trim()
+        const roomName = (row.room || '').trim()
+        const itemCode = (row.code || '').trim()
+        const itemName = (row.name || '').trim()
+        const typeName = (row.type || '').trim()
+
+        // Skip empty rows
+        if (!buildingName && !itemCode && !itemName) continue
+
+        // Build hierarchy: building -> floor -> room
+        let buildingId: string | null = null
+        if (buildingName) buildingId = await getOrCreateBuilding(buildingName, typeName || undefined)
+
+        let floorId: string | null = null
+        if (floorName && buildingId) floorId = await getOrCreateFloor(floorName, buildingId)
+
+        let roomId: string | null = null
+        if (roomName && floorId) roomId = await getOrCreateRoom(roomName, floorId)
+
+        // Create item if we have at least a code or name and a floor
+        if ((itemCode || itemName) && floorId) {
+          const itemTypeId = typeName ? await getOrCreateItemType(typeName) : ''
+          const data = {
+            code: itemCode || ('IMP-' + Date.now()),
+            name: itemName || '',
+            status: (row.status || 'not_started').toLowerCase(),
+            percent: typeof row.percent === 'number' ? row.percent : parseInt(row.percent) || 0,
+            floorId,
+            roomId: roomId || undefined,
+            itemTypeId: itemTypeId || undefined,
+            notes: (row.notes || '').trim() || undefined,
+          }
+
+          // Check for existing item by code
+          let existing = null
+          if (itemCode) existing = await prisma.installationItem.findFirst({ where: { code: itemCode } })
+
+          if (existing) {
+            await prisma.installationItem.update({ where: { id: existing.id }, data })
+          } else {
+            await prisma.installationItem.create({ data })
+          }
+          imported.items++
         }
-        let itemType = null
-        if (row.type) {
-          itemType = await prisma.itemType.findFirst({ where: { name: row.type } })
-          if (!itemType) itemType = await prisma.itemType.create({ data: { code: row.type.substring(0, 10).toUpperCase(), name: row.type } })
-        }
-        const existing = row.id ? await prisma.installationItem.findUnique({ where: { id: row.id } }) : null
-        const data = {
-          code: row.code || ('IMP-' + Date.now()),
-          name: row.name || '',
-          status: row.status || 'not_started',
-          percent: typeof row.percent === 'number' ? row.percent : 0,
-          floorId: floor?.id || '',
-          itemTypeId: itemType?.id || '',
-        }
-        if (existing) {
-          await prisma.installationItem.update({ where: { id: existing.id }, data })
-        } else if (data.floorId) {
-          await prisma.installationItem.create({ data })
-        }
-        imported.items++
       }
     }
 

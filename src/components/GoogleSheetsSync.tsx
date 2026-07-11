@@ -10,40 +10,52 @@ const APPS_SCRIPT = `function doGet(e) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var response = { sheets: {} };
 
-  var bSheet = ss.getSheetByName('Buildings') || ss.insertSheet('Buildings');
-  var bData = bSheet.getDataRange().getValues();
-  if (bData.length > 1) {
-    response.sheets.buildings = bData.slice(1).map(function(row) {
-      return { id: row[0] || '', name: row[1] || '', type: row[2] || '' };
-    });
-  }
-
-  var fSheet = ss.getSheetByName('Floors') || ss.insertSheet('Floors');
-  var fData = fSheet.getDataRange().getValues();
-  if (fData.length > 1) {
-    response.sheets.floors = fData.slice(1).map(function(row) {
-      return { id: row[0] || '', name: row[1] || '', building: row[2] || '' };
-    });
-  }
-
-  var iSheet = ss.getSheetByName('Items') || ss.insertSheet('Items');
-  var iData = iSheet.getDataRange().getValues();
-  if (iData.length > 1) {
-    response.sheets.items = iData.slice(1).map(function(row) {
+  // Read Data sheet (single sheet with full hierarchy)
+  var dSheet = ss.getSheetByName('Data') || ss.insertSheet('Data');
+  var dData = dSheet.getDataRange().getValues();
+  if (dData.length > 1) {
+    response.sheets.data = dData.slice(1).map(function(row) {
       return {
-        id: row[0] || '', code: row[1] || '', name: row[2] || '',
-        status: row[3] || '', percent: Number(row[4]) || 0,
-        floor: row[5] || '', building: row[6] || '', type: row[7] || ''
+        building: row[0] || '', floor: row[1] || '', room: row[2] || '',
+        code: row[3] || '', name: row[4] || '', type: row[5] || '',
+        status: row[6] || '', percent: Number(row[7]) || 0, notes: row[8] || ''
       };
     });
   }
 
-  var tSheet = ss.getSheetByName('ItemTypes') || ss.insertSheet('ItemTypes');
-  var tData = tSheet.getDataRange().getValues();
-  if (tData.length > 1) {
-    response.sheets.itemTypes = tData.slice(1).map(function(row) {
-      return { id: row[0] || '', code: row[1] || '', name: row[2] || '', description: row[3] || '' };
-    });
+  // Also read individual sheets for backward compat
+  var bSheet = ss.getSheetByName('Buildings');
+  if (bSheet) {
+    var bData = bSheet.getDataRange().getValues();
+    if (bData.length > 1) {
+      response.sheets.buildings = bData.slice(1).map(function(row) {
+        return { id: row[0] || '', name: row[1] || '', type: row[2] || '' };
+      });
+    }
+  }
+
+  var fSheet = ss.getSheetByName('Floors');
+  if (fSheet) {
+    var fData = fSheet.getDataRange().getValues();
+    if (fData.length > 1) {
+      response.sheets.floors = fData.slice(1).map(function(row) {
+        return { id: row[0] || '', name: row[1] || '', building: row[2] || '' };
+      });
+    }
+  }
+
+  var iSheet = ss.getSheetByName('Items');
+  if (iSheet) {
+    var iData = iSheet.getDataRange().getValues();
+    if (iData.length > 1) {
+      response.sheets.items = iData.slice(1).map(function(row) {
+        return {
+          id: row[0] || '', code: row[1] || '', name: row[2] || '',
+          status: row[3] || '', percent: Number(row[4]) || 0,
+          floor: row[5] || '', building: row[6] || '', type: row[7] || ''
+        };
+      });
+    }
   }
 
   return ContentService.createTextOutput(JSON.stringify(response))
@@ -55,32 +67,53 @@ function doPost(e) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
 
   if (body.action === 'export' && body.data) {
+    // Write Buildings sheet
     var bSheet = ss.getSheetByName('Buildings') || ss.insertSheet('Buildings');
     bSheet.clear();
     bSheet.appendRow(['ID', 'Name', 'Type']);
     (body.data.buildings || []).forEach(function(b) { bSheet.appendRow([b.id, b.name, b.type]); });
 
+    // Write Floors sheet
     var fSheet = ss.getSheetByName('Floors') || ss.insertSheet('Floors');
     fSheet.clear();
     fSheet.appendRow(['ID', 'Name', 'Building']);
     (body.data.floors || []).forEach(function(f) { fSheet.appendRow([f.id, f.name, f.building]); });
 
+    // Write Rooms sheet
     var rSheet = ss.getSheetByName('Rooms') || ss.insertSheet('Rooms');
     rSheet.clear();
     rSheet.appendRow(['ID', 'Name', 'Floor', 'Building']);
     (body.data.rooms || []).forEach(function(r) { rSheet.appendRow([r.id, r.name, r.floor, r.building]); });
 
+    // Write Items sheet
     var iSheet = ss.getSheetByName('Items') || ss.insertSheet('Items');
     iSheet.clear();
-    iSheet.appendRow(['ID', 'Code', 'Name', 'Status', 'Percent', 'Floor', 'Building', 'Type']);
+    iSheet.appendRow(['ID', 'Code', 'Name', 'Status', 'Percent', 'Floor', 'Building', 'Type', 'Room']);
     (body.data.items || []).forEach(function(i) {
-      iSheet.appendRow([i.id, i.code, i.name, i.status, i.percent, i.floor, i.building, i.type]);
+      iSheet.appendRow([i.id, i.code, i.name, i.status, i.percent, i.floor, i.building, i.type, i.room || '']);
     });
 
+    // Write ItemTypes sheet
     var tSheet = ss.getSheetByName('ItemTypes') || ss.insertSheet('ItemTypes');
     tSheet.clear();
     tSheet.appendRow(['ID', 'Code', 'Name', 'Description']);
     (body.data.itemTypes || []).forEach(function(t) { tSheet.appendRow([t.id, t.code, t.name, t.description]); });
+
+    // Write Import sheet (single sheet for easy import)
+    var impSheet = ss.getSheetByName('Import') || ss.insertSheet('Import');
+    impSheet.clear();
+    impSheet.appendRow(['Building', 'Floor', 'Room', 'Item Code', 'Item Name', 'Item Type', 'Status', 'Percent', 'Notes']);
+    (body.data.items || []).forEach(function(i) {
+      impSheet.appendRow([i.building, i.floor, i.room || '', i.code, i.name, i.type, i.status, i.percent, '']);
+    });
+    // Format header row
+    var lastCol = impSheet.getLastColumn();
+    impSheet.getRange(1, 1, 1, lastCol).setFontWeight('bold').setBackground('#4285f4').setFontColor('white');
+    impSheet.setFrozenRows(1);
+    // Auto-resize columns
+    for (var c = 1; c <= lastCol; c++) {
+      impSheet.autoResizeColumn(c);
+    }
 
     return ContentService.createTextOutput(JSON.stringify({ success: true }))
       .setMimeType(ContentService.MimeType.JSON);
@@ -203,6 +236,11 @@ export default function GoogleSheetsSync() {
             <li>Set Execute as <strong>Me</strong>, Who has access <strong>Anyone</strong></li>
             <li>Click Deploy, copy the Web App URL, paste above</li>
           </ol>
+          <div className="mt-3 p-3 bg-blue-50 rounded-lg text-sm">
+            <p className="font-semibold text-blue-800 mb-1">Import Format (Import sheet)</p>
+            <p className="text-blue-700">Columns: <strong>Building | Floor | Room | Item Code | Item Name | Item Type | Status | Percent | Notes</strong></p>
+            <p className="text-blue-600 text-xs mt-1">Tip: Export first to see the format, then edit the Import sheet and import back. Items are matched by Item Code.</p>
+          </div>
           <Button variant="outline" size="sm" onClick={() => setShowScript(!showScript)} className="mt-2">
             <Copy className="h-4 w-4 mr-1" />
             {showScript ? 'Hide Script Code' : 'Show Script Code to Copy'}
