@@ -273,15 +273,7 @@ app.delete('/workflow-steps/:id', async (c) => {
 
 
 // ===== Google Sheets Sync =====
-import { readFileSync, writeFileSync, existsSync } from 'fs'
-const CONFIG_PATH = './sheets-config.json'
 let syncConfig = { scriptUrl: '' as string }
-try {
-  if (existsSync(CONFIG_PATH)) {
-    const saved = JSON.parse(readFileSync(CONFIG_PATH, 'utf-8'))
-    syncConfig.scriptUrl = saved.scriptUrl || ''
-  }
-} catch {}
 
 app.get('/sheets/config', (c) => {
   return c.json({ scriptUrl: syncConfig.scriptUrl })
@@ -290,7 +282,6 @@ app.get('/sheets/config', (c) => {
 app.post('/sheets/config', async (c) => {
   const body = await c.req.json()
   syncConfig.scriptUrl = body.scriptUrl || ''
-  try { writeFileSync(CONFIG_PATH, JSON.stringify({ scriptUrl: syncConfig.scriptUrl })) } catch {}
   return c.json({ success: true, scriptUrl: syncConfig.scriptUrl })
 })
 
@@ -344,8 +335,6 @@ app.post('/sheets/export', async (c) => {
 })
 
 
-app.get('/sheets/debug', async (c) => {
-  if (!syncConfig.scriptUrl) return c.json({ error: 'no config', configEmpty: true })
   try {
     const res = await fetch(`${syncConfig.scriptUrl}?action=import`, { method: 'GET', redirect: 'follow' })
     const text = await res.text()
@@ -400,151 +389,168 @@ async function readSheetCSV(sheetId: string, tabName: string): Promise<string[][
   return parseCSV(text)
 }
 
+
+  try {
+    const isAppsScript = syncConfig.scriptUrl.includes('script.google.com')
+    const importUrl = isAppsScript ? `${syncConfig.scriptUrl}?action=import` : syncConfig.scriptUrl
+    const res = await fetch(importUrl, { method: 'GET', redirect: 'follow' })
+    const text = await res.text()
+    let parsed: any
+    try { parsed = JSON.parse(text) } catch { parsed = null }
+    return c.json({
+      url: importUrl,
+      fetchOk: res.ok,
+      status: res.status,
+      isJson: !!parsed,
+      hasData: !!parsed?.sheets?.data,
+      hasItems: !!parsed?.sheets?.items,
+      dataCount: parsed?.sheets?.data?.length ?? 0,
+      itemCount: parsed?.sheets?.items?.length ?? 0,
+      keys: parsed?.sheets ? Object.keys(parsed.sheets) : [],
+      sample: parsed?.sheets?.data?.[0] || parsed?.sheets?.items?.[0] || null,
+    })
+  } catch (err: any) {
+    return c.json({ error: err.message })
+  }
+})
+
 app.post('/sheets/import', async (c) => {
   if (!syncConfig.scriptUrl) return c.json({ ok: false, error: 'No Google Sheet URL configured' }, 400)
 
   try {
-    const sheetId = extractSheetId(syncConfig.scriptUrl)
-    if (!sheetId) return c.json({ ok: false, error: 'Could not extract Sheet ID from URL' }, 400)
+    // Try Apps Script GET first (works for Apps Script URLs and Google Sheet URLs with Apps Script)
+    let rawData: any[] = []
 
-    // Read all tabs directly from Google Sheets CSV export
-    const [buildingRows, floorRows, roomRows, itemRows] = await Promise.all([
-      readSheetCSV(sheetId, 'Buildings'),
-      readSheetCSV(sheetId, 'Floors'),
-      readSheetCSV(sheetId, 'Rooms'),
-      readSheetCSV(sheetId, 'Items'),
-    ])
+    // Method 1: Try Apps Script GET
+    try {
+      const scriptUrl = syncConfig.scriptUrl
+      const isAppsScript = scriptUrl.includes('script.google.com')
+      const importUrl = isAppsScript ? `${scriptUrl}?action=import` : scriptUrl
+      const res = await fetch(importUrl, { method: 'GET', redirect: 'follow' })
+      const text = await res.text()
+      const parsed = JSON.parse(text)
 
-    const result = { sheets: {} as any }
-    if (buildingRows.length > 1) {
-      result.sheets.buildings = buildingRows.slice(1).map(r => ({ id: r[0]||'', name: r[1]||'', type: r[2]||'' }))
-    }
-    if (floorRows.length > 1) {
-      result.sheets.floors = floorRows.slice(1).map(r => ({ id: r[0]||'', name: r[1]||'', building: r[2]||'' }))
-    }
-    if (roomRows.length > 1) {
-      result.sheets.rooms = roomRows.slice(1).map(r => ({ id: r[0]||'', name: r[1]||'', floor: r[2]||'', building: r[3]||'' }))
-    }
-    if (itemRows.length > 1) {
-      result.sheets.items = itemRows.slice(1).map(r => ({ id: r[0]||'', code: r[1]||'', name: r[2]||'', status: r[3]||'', percent: Number(r[4])||0, floor: r[5]||'', building: r[6]||'', type: r[7]||'', room: r[8]||'' }))
+      if (parsed.sheets?.data) {
+        rawData = parsed.sheets.data  // Flat array format
+      } else if (parsed.sheets?.items) {
+        // Legacy format with separate arrays
+        rawData = parsed.sheets.items
+      }
+    } catch {}
+
+    // Method 2: If no data from Apps Script, try CSV export from Google Sheets
+    if (rawData.length === 0) {
+      const sheetIdMatch = syncConfig.scriptUrl.match(/spreadsheets\/d\/([a-zA-Z0-9_-]+)/)
+      if (sheetIdMatch) {
+        const sheetId = sheetIdMatch[1]
+        for (const tabName of ['Items', 'Data', 'Sheet1']) {
+          try {
+            const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tabName)}`
+            const res = await fetch(csvUrl, { redirect: 'follow' })
+            const text = await res.text()
+            if (!text.trim() || text.startsWith('<!DOCTYPE') || text.length < 10) continue
+            const lines = text.split('\n').filter((l: string) => l.trim())
+            if (lines.length < 2) continue
+            const headers = lines[0].split(',').map((h: string) => h.replace(/"/g, '').trim().toLowerCase())
+            for (let i = 1; i < lines.length; i++) {
+              const cells = lines[i].split(',').map((c: string) => c.replace(/"/g, '').trim())
+              const row: any = {}
+              headers.forEach((h: string, j: number) => { row[h] = cells[j] || '' })
+              rawData.push(row)
+            }
+            break
+          } catch {}
+        }
+      }
     }
 
-    if (!result.sheets.buildings && !result.sheets.items) return c.json({ ok: false, error: 'No data found in sheets. Make sure you have Buildings and Items tabs.' }, 404)
+    if (rawData.length === 0) return c.json({ ok: false, error: 'No data found. Check your sheet has data.' }, 404)
 
     const imported = { buildings: 0, floors: 0, rooms: 0, items: 0 }
-
-    // Cache for created/found entities
     const buildingCache: Record<string, string> = {}
     const floorCache: Record<string, string> = {}
     const roomCache: Record<string, string> = {}
-    const itemTypeCache: Record<string, string> = {}
+    const typeCache: Record<string, string> = {}
 
-    async function getOrCreateBuilding(name: string, typeName?: string): Promise<string | null> {
-      if (!name) return null
-      const cacheKey = name.trim()
-      if (buildingCache[cacheKey]) return buildingCache[cacheKey]
-      let building = await prisma.building.findFirst({ where: { name: cacheKey } })
-      if (!building) {
-        let btId = ''
-        if (typeName) {
-          const bt = await getOrCreateItemType(typeName)
-          btId = bt || ''
-        }
-        building = await prisma.building.create({ data: { name: cacheKey, buildingTypeId: btId } })
+    // Pre-load existing
+    const existBuildings = await prisma.building.findMany()
+    for (const b of existBuildings) buildingCache[b.name] = b.id
+    const existFloors = await prisma.floor.findMany({ include: { building: true } })
+    for (const f of existFloors) floorCache[f.building.name + '|' + f.name] = f.id
+    const existRooms = await prisma.room.findMany({ include: { floor: { include: { building: true } } } })
+    for (const r of existRooms) roomCache[r.floor.building.name + '|' + r.floor.name + '|' + r.name] = r.id
+    const existTypes = await prisma.itemType.findMany()
+    for (const t of existTypes) typeCache[t.name] = t.id
+
+    for (const row of rawData) {
+      const buildingName = (row.building || '').trim()
+      const floorName = (row.floor || '').trim()
+      const roomName = (row.room || '').trim()
+      const code = (row.code || '').trim()
+      const typeName = (row.type || '').trim()
+      const status = row.status || 'not_started'
+      const percent = typeof row.percent === 'number' ? row.percent : parseInt(row.percent) || 0
+
+      if (!buildingName && !code) continue
+
+      // Get or create building
+      let buildingId = buildingCache[buildingName] || null
+      if (buildingName && !buildingId) {
+        const b = await prisma.building.create({ data: { name: buildingName, buildingTypeId: '' } })
+        buildingId = b.id
+        buildingCache[buildingName] = b.id
+        imported.buildings++
+      } else if (buildingId) {
         imported.buildings++
       }
-      buildingCache[cacheKey] = building.id
-      return building.id
-    }
 
-    async function getOrCreateFloor(name: string, buildingId: string): Promise<string | null> {
-      if (!name || !buildingId) return null
-      const cacheKey = `${buildingId}:${name.trim()}`
-      if (floorCache[cacheKey]) return floorCache[cacheKey]
-      let floor = await prisma.floor.findFirst({ where: { name: name.trim(), buildingId } })
-      if (!floor) {
-        floor = await prisma.floor.create({ data: { name: name.trim(), buildingId, sortOrder: 0 } })
+      // Get or create floor
+      let floorId = floorCache[buildingName + '|' + floorName] || null
+      if (floorName && buildingId && !floorId) {
+        const f = await prisma.floor.create({ data: { name: floorName, buildingId, sortOrder: 0 } })
+        floorId = f.id
+        floorCache[buildingName + '|' + floorName] = f.id
+        imported.floors++
+      } else if (floorId) {
         imported.floors++
       }
-      floorCache[cacheKey] = floor.id
-      return floor.id
-    }
 
-    async function getOrCreateRoom(name: string, floorId: string): Promise<string | null> {
-      if (!name || !floorId) return null
-      const cacheKey = `${floorId}:${name.trim()}`
-      if (roomCache[cacheKey]) return roomCache[cacheKey]
-      let room = await prisma.room.findFirst({ where: { name: name.trim(), floorId } })
-      if (!room) {
-        room = await prisma.room.create({ data: { name: name.trim(), floorId } })
+      // Get or create room
+      let roomId: string | undefined = undefined
+      const roomKey = buildingName + '|' + floorName + '|' + roomName
+      if (roomName && floorId && !roomCache[roomKey]) {
+        const r = await prisma.room.create({ data: { name: roomName, floorId } })
+        roomId = r.id
+        roomCache[roomKey] = r.id
+        imported.rooms++
+      } else if (roomName && roomCache[roomKey]) {
+        roomId = roomCache[roomKey]
         imported.rooms++
       }
-      roomCache[cacheKey] = room.id
-      return room.id
-    }
 
-    async function getOrCreateItemType(name: string): Promise<string | null> {
-      if (!name) return null
-      const cacheKey = name.trim()
-      if (itemTypeCache[cacheKey]) return itemTypeCache[cacheKey]
-      let type = await prisma.itemType.findFirst({ where: { name: cacheKey } })
-      if (!type) {
-        type = await prisma.itemType.create({ data: { code: cacheKey.substring(0, 10).toUpperCase(), name: cacheKey } })
+      // Get or create item type
+      let itemTypeId = typeCache[typeName] || ''
+      if (typeName && !itemTypeId) {
+        const t = await prisma.itemType.create({ data: { code: typeName.substring(0, 10).toUpperCase(), name: typeName } })
+        itemTypeId = t.id
+        typeCache[typeName] = t.id
       }
-      itemTypeCache[cacheKey] = type.id
-      return type.id
-    }
 
-    // Import from a single "Data" sheet with columns:
-    // Building | Floor | Room | Item Code | Item Name | Item Type | Status | Percent | Notes
-    if (result.sheets.data) {
-      for (const row of result.sheets.data) {
-        const buildingName = (row.building || '').trim()
-        const floorName = (row.floor || '').trim()
-        const roomName = (row.room || '').trim()
-        const itemCode = (row.code || '').trim()
-        const itemName = (row.name || '').trim()
-        const typeName = (row.type || '').trim()
+      if (!code) continue
 
-        // Skip empty rows
-        if (!buildingName && !itemCode && !itemName) continue
-
-        // Build hierarchy: building -> floor -> room
-        let buildingId: string | null = null
-        if (buildingName) buildingId = await getOrCreateBuilding(buildingName, typeName || undefined)
-
-        let floorId: string | null = null
-        if (floorName && buildingId) floorId = await getOrCreateFloor(floorName, buildingId)
-
-        let roomId: string | null = null
-        if (roomName && floorId) roomId = await getOrCreateRoom(roomName, floorId)
-
-        // Create item if we have at least a code or name and a floor
-        if ((itemCode || itemName) && floorId) {
-          const itemTypeId = typeName ? await getOrCreateItemType(typeName) : ''
-          const data = {
-            code: itemCode || ('IMP-' + Date.now()),
-            name: itemName || '',
-            status: (row.status || 'not_started').toLowerCase(),
-            percent: typeof row.percent === 'number' ? row.percent : parseInt(row.percent) || 0,
-            floorId,
-            roomId: roomId || undefined,
-            itemTypeId: itemTypeId || undefined,
-            notes: (row.notes || '').trim() || undefined,
-          }
-
-          // Check for existing item by code
-          let existing = null
-          if (itemCode) existing = await prisma.installationItem.findFirst({ where: { code: itemCode } })
-
-          if (existing) {
-            await prisma.installationItem.update({ where: { id: existing.id }, data })
-          } else {
-            await prisma.installationItem.create({ data })
-          }
-          imported.items++
-        }
+      // Create or update item
+      const existing = await prisma.installationItem.findFirst({ where: { code } })
+      const itemData = {
+        code, name: (row.name || '').trim(), status, percent,
+        floorId: floorId || '', itemTypeId, roomId: roomId || undefined
       }
+
+      if (existing) {
+        await prisma.installationItem.update({ where: { id: existing.id }, data: itemData })
+      } else if (floorId) {
+        await prisma.installationItem.create({ data: itemData })
+      }
+      imported.items++
     }
 
     return c.json({ ok: true, imported })
