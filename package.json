@@ -25,6 +25,7 @@
     "@shogo-ai/sdk": "^1.10.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "googleapis": "^173.0.0",
     "hono": "^4.0.0",
     "lucide-react": "^0.563.0",
     "mobx": "^6.13.0",
