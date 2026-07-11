@@ -355,199 +355,102 @@ app.post('/sheets/export', async (c) => {
   }
 })
 
-// Helper: parse CSV row
-function parseCSV(text: string): string[][] {
-  const lines = text.split('\n').filter(l => l.trim())
-  return lines.map(line => {
-    const cells: string[] = []
-    let current = ''
-    let inQuotes = false
-    for (const ch of line) {
-      if (ch === '"') { inQuotes = !inQuotes; continue }
-      if (ch === ',' && !inQuotes) { cells.push(current.trim()); current = ''; continue }
-      current += ch
-    }
-    cells.push(current.trim())
-    return cells
-  })
-}
-
-// Extract sheet ID from Google Sheets URL
-function extractSheetId(url: string): string | null {
-  const m = url.match(/spreadsheets\/d\/([a-zA-Z0-9_-]+)/)
-  return m ? m[1] : null
-}
-
-// Read a sheet tab as CSV
-async function readSheetCSV(sheetId: string, tabName: string): Promise<string[][]> {
-  const encoded = encodeURIComponent(tabName)
-  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encoded}`
-  const res = await fetch(url, { redirect: 'follow' })
-  if (!res.ok) return []
-  const text = await res.text()
-  if (!text.trim() || text.startsWith('<!DOCTYPE')) return []
-  return parseCSV(text)
-}
-
-
-  try {
-    const isAppsScript = syncConfig.scriptUrl.includes('script.google.com')
-    const importUrl = isAppsScript ? `${syncConfig.scriptUrl}?action=import` : syncConfig.scriptUrl
-    const res = await fetch(importUrl, { method: 'GET', redirect: 'follow' })
-    const text = await res.text()
-    let parsed: any
-    try { parsed = JSON.parse(text) } catch { parsed = null }
-    return c.json({
-      url: importUrl,
-      fetchOk: res.ok,
-      status: res.status,
-      isJson: !!parsed,
-      hasData: !!parsed?.sheets?.data,
-      hasItems: !!parsed?.sheets?.items,
-      dataCount: parsed?.sheets?.data?.length ?? 0,
-      itemCount: parsed?.sheets?.items?.length ?? 0,
-      keys: parsed?.sheets ? Object.keys(parsed.sheets) : [],
-      sample: parsed?.sheets?.data?.[0] || parsed?.sheets?.items?.[0] || null,
-    })
-  } catch (err: any) {
-    return c.json({ error: err.message })
-  }
-})
-
 app.post('/sheets/import', async (c) => {
   if (!syncConfig.scriptUrl) return c.json({ ok: false, error: 'No Google Sheet URL configured' }, 400)
 
   try {
-    // Try Apps Script GET first (works for Apps Script URLs and Google Sheet URLs with Apps Script)
-    let rawData: any[] = []
+    // Fetch data from Apps Script
+    const importUrl = syncConfig.scriptUrl.includes('script.google.com')
+      ? `${syncConfig.scriptUrl}?action=import`
+      : syncConfig.scriptUrl
+    const res = await fetch(importUrl, { method: 'GET', redirect: 'follow' })
+    const text = await res.text()
+    let parsed: any
+    try { parsed = JSON.parse(text) } catch { return c.json({ ok: false, error: 'Could not read data from sheet' }, 502) }
 
-    // Method 1: Try Apps Script GET
-    try {
-      const scriptUrl = syncConfig.scriptUrl
-      const isAppsScript = scriptUrl.includes('script.google.com')
-      const importUrl = isAppsScript ? `${scriptUrl}?action=import` : scriptUrl
-      const res = await fetch(importUrl, { method: 'GET', redirect: 'follow' })
-      const text = await res.text()
-      const parsed = JSON.parse(text)
-
-      if (parsed.sheets?.data) {
-        rawData = parsed.sheets.data  // Flat array format
-      } else if (parsed.sheets?.items) {
-        // Legacy format with separate arrays
-        rawData = parsed.sheets.items
-      }
-    } catch {}
-
-    // Method 2: If no data from Apps Script, try CSV export from Google Sheets
-    if (rawData.length === 0) {
-      const sheetIdMatch = syncConfig.scriptUrl.match(/spreadsheets\/d\/([a-zA-Z0-9_-]+)/)
-      if (sheetIdMatch) {
-        const sheetId = sheetIdMatch[1]
-        for (const tabName of ['Items', 'Data', 'Sheet1']) {
-          try {
-            const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tabName)}`
-            const res = await fetch(csvUrl, { redirect: 'follow' })
-            const text = await res.text()
-            if (!text.trim() || text.startsWith('<!DOCTYPE') || text.length < 10) continue
-            const lines = text.split('\n').filter((l: string) => l.trim())
-            if (lines.length < 2) continue
-            const headers = lines[0].split(',').map((h: string) => h.replace(/"/g, '').trim().toLowerCase())
-            for (let i = 1; i < lines.length; i++) {
-              const cells = lines[i].split(',').map((c: string) => c.replace(/"/g, '').trim())
-              const row: any = {}
-              headers.forEach((h: string, j: number) => { row[h] = cells[j] || '' })
-              rawData.push(row)
-            }
-            break
-          } catch {}
-        }
-      }
+    // Build flat rows from whatever format the Apps Script returns
+    let rows: any[] = []
+    if (parsed.sheets?.data) {
+      rows = parsed.sheets.data  // New flat format: [{building, floor, room, code, name, type, status, percent}]
+    } else if (parsed.sheets?.items) {
+      rows = parsed.sheets.items  // Legacy format: items array with building/floor fields
+    } else if (Array.isArray(parsed)) {
+      rows = parsed  // Direct array
     }
 
-    if (rawData.length === 0) return c.json({ ok: false, error: 'No data found. Check your sheet has data.' }, 404)
+    if (rows.length === 0) return c.json({ ok: true, imported: { buildings: 0, floors: 0, rooms: 0, items: 0 }, message: 'Sheet is empty' })
 
     const imported = { buildings: 0, floors: 0, rooms: 0, items: 0 }
+
+    // Caches
     const buildingCache: Record<string, string> = {}
     const floorCache: Record<string, string> = {}
     const roomCache: Record<string, string> = {}
     const typeCache: Record<string, string> = {}
 
-    // Pre-load existing
-    const existBuildings = await prisma.building.findMany()
-    for (const b of existBuildings) buildingCache[b.name] = b.id
-    const existFloors = await prisma.floor.findMany({ include: { building: true } })
-    for (const f of existFloors) floorCache[f.building.name + '|' + f.name] = f.id
-    const existRooms = await prisma.room.findMany({ include: { floor: { include: { building: true } } } })
-    for (const r of existRooms) roomCache[r.floor.building.name + '|' + r.floor.name + '|' + r.name] = r.id
-    const existTypes = await prisma.itemType.findMany()
-    for (const t of existTypes) typeCache[t.name] = t.id
+    // Pre-load existing data
+    for (const b of await prisma.building.findMany()) buildingCache[b.name] = b.id
+    for (const f of await prisma.floor.findMany({ include: { building: true } }))
+      floorCache[f.building.name + '|' + f.name] = f.id
+    for (const r of await prisma.room.findMany({ include: { floor: { include: { building: true } } } }))
+      roomCache[r.floor.building.name + '|' + r.floor.name + '|' + r.name] = r.id
+    for (const t of await prisma.itemType.findMany()) typeCache[t.name] = t.id
 
-    for (const row of rawData) {
-      const buildingName = (row.building || '').trim()
-      const floorName = (row.floor || '').trim()
-      const roomName = (row.room || '').trim()
+    for (const row of rows) {
+      const bName = (row.building || '').trim()
+      const fName = (row.floor || '').trim()
+      const rName = (row.room || '').trim()
       const code = (row.code || '').trim()
-      const typeName = (row.type || '').trim()
-      const status = row.status || 'not_started'
-      const percent = typeof row.percent === 'number' ? row.percent : parseInt(row.percent) || 0
+      if (!bName && !code) continue
 
-      if (!buildingName && !code) continue
-
-      // Get or create building
-      let buildingId = buildingCache[buildingName] || null
-      if (buildingName && !buildingId) {
-        const b = await prisma.building.create({ data: { name: buildingName, buildingTypeId: '' } })
-        buildingId = b.id
-        buildingCache[buildingName] = b.id
-        imported.buildings++
-      } else if (buildingId) {
+      // Building
+      let bId = buildingCache[bName] || ''
+      if (bName && !bId) {
+        const b = await prisma.building.create({ data: { name: bName, buildingTypeId: '' } })
+        bId = b.id
+        buildingCache[bName] = b.id
         imported.buildings++
       }
 
-      // Get or create floor
-      let floorId = floorCache[buildingName + '|' + floorName] || null
-      if (floorName && buildingId && !floorId) {
-        const f = await prisma.floor.create({ data: { name: floorName, buildingId, sortOrder: 0 } })
-        floorId = f.id
-        floorCache[buildingName + '|' + floorName] = f.id
-        imported.floors++
-      } else if (floorId) {
+      // Floor
+      let fId = floorCache[bName + '|' + fName] || ''
+      if (fName && bId && !fId) {
+        const f = await prisma.floor.create({ data: { name: fName, buildingId: bId, sortOrder: 0 } })
+        fId = f.id
+        floorCache[bName + '|' + fName] = f.id
         imported.floors++
       }
 
-      // Get or create room
-      let roomId: string | undefined = undefined
-      const roomKey = buildingName + '|' + floorName + '|' + roomName
-      if (roomName && floorId && !roomCache[roomKey]) {
-        const r = await prisma.room.create({ data: { name: roomName, floorId } })
+      // Room
+      let roomId = ''
+      const roomKey = bName + '|' + fName + '|' + rName
+      if (rName && fId && !roomCache[roomKey]) {
+        const r = await prisma.room.create({ data: { name: rName, floorId: fId } })
         roomId = r.id
         roomCache[roomKey] = r.id
         imported.rooms++
-      } else if (roomName && roomCache[roomKey]) {
+      } else if (roomCache[roomKey]) {
         roomId = roomCache[roomKey]
-        imported.rooms++
       }
 
-      // Get or create item type
-      let itemTypeId = typeCache[typeName] || ''
-      if (typeName && !itemTypeId) {
+      // Item Type
+      const typeName = (row.type || '').trim()
+      let typeId = typeCache[typeName] || ''
+      if (typeName && !typeId) {
         const t = await prisma.itemType.create({ data: { code: typeName.substring(0, 10).toUpperCase(), name: typeName } })
-        itemTypeId = t.id
+        typeId = t.id
         typeCache[typeName] = t.id
       }
 
+      // Item
       if (!code) continue
-
-      // Create or update item
+      const status = row.status || 'not_started'
+      const percent = typeof row.percent === 'number' ? row.percent : parseInt(row.percent) || 0
+      const itemData = { code, name: (row.name || '').trim(), status, percent, floorId: fId, itemTypeId: typeId, roomId: roomId || undefined }
       const existing = await prisma.installationItem.findFirst({ where: { code } })
-      const itemData = {
-        code, name: (row.name || '').trim(), status, percent,
-        floorId: floorId || '', itemTypeId, roomId: roomId || undefined
-      }
-
       if (existing) {
         await prisma.installationItem.update({ where: { id: existing.id }, data: itemData })
-      } else if (floorId) {
+      } else if (fId) {
         await prisma.installationItem.create({ data: itemData })
       }
       imported.items++
