@@ -385,7 +385,7 @@ function parseCSV(text: string): string[][] {
 
 // Extract sheet ID from Google Sheets URL
 function extractSheetId(url: string): string | null {
-  const m = url.match(/\/sheets\/d\/([a-zA-Z0-9_-]+)/)
+  const m = url.match(/spreadsheets\/d\/([a-zA-Z0-9_-]+)/)
   return m ? m[1] : null
 }
 
