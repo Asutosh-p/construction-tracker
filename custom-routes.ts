@@ -343,6 +343,29 @@ app.post('/sheets/export', async (c) => {
   }
 })
 
+
+app.get('/sheets/debug', async (c) => {
+  if (!syncConfig.scriptUrl) return c.json({ error: 'no config', configEmpty: true })
+  try {
+    const res = await fetch(`${syncConfig.scriptUrl}?action=import`, { method: 'GET', redirect: 'follow' })
+    const text = await res.text()
+    let parsed: any
+    try { parsed = JSON.parse(text) } catch { parsed = { raw: text.substring(0, 300) } }
+    return c.json({
+      fetchStatus: res.status,
+      isJson: !!parsed.sheets,
+      buildingCount: parsed.sheets?.buildings?.length ?? 0,
+      floorCount: parsed.sheets?.floors?.length ?? 0,
+      itemCount: parsed.sheets?.items?.length ?? 0,
+      buildings: parsed.sheets?.buildings?.map((b: any) => b.name) || [],
+      floors: parsed.sheets?.floors?.map((f: any) => f.name + ' @ ' + f.building) || [],
+      items: parsed.sheets?.items?.map((i: any) => i.code + ' @ ' + i.floor) || [],
+    })
+  } catch (err: any) {
+    return c.json({ error: err.message })
+  }
+})
+
 app.post('/sheets/import', async (c) => {
   if (!syncConfig.scriptUrl) return c.json({ ok: false, error: 'No Google Sheet URL configured' }, 400)
 
