@@ -273,7 +273,15 @@ app.delete('/workflow-steps/:id', async (c) => {
 
 
 // ===== Google Sheets Sync =====
+import { readFileSync, writeFileSync, existsSync } from 'fs'
+const CONFIG_PATH = './sheets-config.json'
 let syncConfig = { scriptUrl: '' as string }
+try {
+  if (existsSync(CONFIG_PATH)) {
+    const saved = JSON.parse(readFileSync(CONFIG_PATH, 'utf-8'))
+    syncConfig.scriptUrl = saved.scriptUrl || ''
+  }
+} catch {}
 
 app.get('/sheets/config', (c) => {
   return c.json({ scriptUrl: syncConfig.scriptUrl })
@@ -282,6 +290,7 @@ app.get('/sheets/config', (c) => {
 app.post('/sheets/config', async (c) => {
   const body = await c.req.json()
   syncConfig.scriptUrl = body.scriptUrl || ''
+  try { writeFileSync(CONFIG_PATH, JSON.stringify({ scriptUrl: syncConfig.scriptUrl })) } catch {}
   return c.json({ success: true, scriptUrl: syncConfig.scriptUrl })
 })
 
@@ -338,10 +347,8 @@ app.post('/sheets/import', async (c) => {
   if (!syncConfig.scriptUrl) return c.json({ ok: false, error: 'No Google Sheet URL configured' }, 400)
 
   try {
-    const res = await fetch(syncConfig.scriptUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({ action: 'import' }),
+    const res = await fetch(`${syncConfig.scriptUrl}?action=import`, {
+      method: 'GET',
       redirect: 'follow'
     })
     const text = await res.text()
