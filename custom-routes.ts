@@ -385,7 +385,8 @@ app.post('/sheets/import', async (c) => {
       // Building
       let bId = buildingCache[bName] || ''
       if (bName && !bId) {
-        const b = await prisma.building.create({ data: { name: bName, buildingTypeId: '' } })
+        const bt = await prisma.buildingType.findFirst() || await prisma.buildingType.create({ data: { code: 'DEFAULT', name: 'Default' } })
+        const b = await prisma.building.create({ data: { name: bName, buildingTypeId: bt.id } })
         bId = b.id
         buildingCache[bName] = b.id
         imported.buildings++
