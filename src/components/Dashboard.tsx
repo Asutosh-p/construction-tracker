@@ -8,7 +8,6 @@ import { Building2, Layers, CheckCircle2, Clock, AlertCircle } from 'lucide-reac
 interface DashboardStats {
   totalBuildings: number
   totalFloors: number
-  totalRooms: number
   totalItems: number
   completedItems: number
   inProgressItems: number
@@ -50,7 +49,6 @@ export default function Dashboard() {
         <Card><CardContent className="p-6"><div className="flex items-center gap-4">
           <div className="p-3 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg"><Layers className="h-6 w-6 text-indigo-600 dark:text-indigo-400" /></div>
           <div><p className="text-2xl font-bold">{stats.totalFloors}</p><p className="text-sm text-muted-foreground">Floors</p></div>
-          <div><p className="text-2xl font-bold">{stats.totalRooms}</p><p className="text-sm text-muted-foreground">Rooms</p></div>
         </div></CardContent></Card>
 
         <Card><CardContent className="p-6"><div className="flex items-center gap-4">
@@ -100,7 +98,7 @@ export default function Dashboard() {
               <Tooltip />
             </PieChart>
           </ResponsiveContainer>
-        </CardContent></Card>
+        </Card></Card>
       </div>
 
       <Card><CardHeader><CardTitle>Quick Status</CardTitle></CardHeader><CardContent>
@@ -118,7 +116,7 @@ export default function Dashboard() {
             <div><p className="text-2xl font-bold text-gray-600">{stats.notStartedItems}</p><p className="text-sm text-muted-foreground">Not Started</p></div>
           </div>
         </div>
-      </CardContent></Card>
+      </Card></Card>
     </div>
   )
 }
